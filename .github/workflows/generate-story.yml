@@ -1,0 +1,134 @@
+# GitHub Actions Workflow to Generate Commit Story Image
+
+name: Generate Commit Story Image
+
+# Controls when the workflow will run
+on:
+  push:
+    branches: [ main ] # Trigger only on pushes to the main branch (adjust as needed)
+    # You could also trigger on pushes to any branch:
+    # branches: [ '**' ]
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest # Use the latest Ubuntu runner
+
+    steps:
+      # Step 1: Checkout specific files (Sparse Checkout)
+      - name: Checkout specific files (Sparse Checkout)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # Fetch enough history for diff against parent
+          sparse-checkout: |
+            .github/commit-story/
+            package.json
+            pnpm-lock.yaml
+          sparse-checkout-cone-mode: false # Use non-cone mode for specific files/folders
+
+      # Step 2: Set up Node.js environment
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20' # Specify Node.js version (use your project's version)
+
+      # Step 3: Set up pnpm
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      # Step 4: Get pnpm store directory
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      # Step 5: Setup pnpm cache
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      # Step 6: Install dependencies (will be faster if cache hit)
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Step 7: Install Puppeteer system dependencies
+      # Needed for headless Chromium on Ubuntu runner
+      - name: Install Puppeteer System Dependencies
+        run: |
+          # Install Puppeteer system dependencies (list updated for newer Ubuntu versions)
+          sudo apt-get update
+          sudo apt-get install -yq \
+            libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgcc1 \
+            libgdk-pixbuf2.0-0 libglib2.0-0 libgtk-3-0 libnspr4 libpango-1.0-0 libpangocairo-1.0-0 \
+            libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 \
+            libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
+            ca-certificates fonts-liberation libnss3 lsb-release xdg-utils wget \
+            --no-install-recommends # Avoid pulling in unnecessary extras
+
+      # Step 8: Cache Puppeteer browser download
+      - name: Cache Puppeteer browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/puppeteer # Default Puppeteer cache directory
+          # Key based on runner OS and a static string (browser version is usually tied to puppeteer package version)
+          key: ${{ runner.os }}-puppeteer-${{ hashFiles('**/pnpm-lock.yaml') }} # Include lockfile hash to bust cache if puppeteer version changes
+          restore-keys: |
+            ${{ runner.os }}-puppeteer-
+
+      # Step 9: Download appropriate Chromium browser for Puppeteer (will use cache if available)
+      - name: Download Puppeteer Browser
+        run: npx puppeteer browsers install chrome
+
+      # Step 10: Extract commit info and diff stats
+      - name: Get commit data
+        id: commit_data
+        run: |
+          COMMIT_SHA_SHORT=$(echo $GITHUB_SHA | cut -c1-7)
+          # Get the message of the latest commit in the push
+          COMMIT_MSG=$(git log -1 --pretty=%B $GITHUB_SHA)
+          # Get diff stats compared to the previous commit on this branch
+          # Note: This compares the latest commit to its direct parent.
+          # For pushes with multiple commits, this shows stats for the *last* commit only.
+          # A more complex diff range like ${{ github.event.before }}..${{ github.sha }} could be used
+          # but requires careful handling of the first push to a branch.
+          DIFF_STATS=$(git diff --shortstat HEAD~1 HEAD || echo "0 files changed") # Handle initial commit case
+          FILES_CHANGED=$(echo "$DIFF_STATS" | grep -o '[0-9]\+ file' | grep -o '[0-9]\+' || echo "0")
+          LINES_ADDED=$(echo "$DIFF_STATS" | grep -o '[0-9]\+ insertion' | grep -o '[0-9]\+' || echo "0")
+          LINES_DELETED=$(echo "$DIFF_STATS" | grep -o '[0-9]\+ deletion' | grep -o '[0-9]\+' || echo "0")
+
+          # Use the raw commit message directly for the environment variable
+          echo "COMMIT_SHA_SHORT=$COMMIT_SHA_SHORT" >> $GITHUB_ENV
+          echo "COMMIT_SHA_FULL=$GITHUB_SHA" >> $GITHUB_ENV # Add full SHA
+          echo "COMMIT_MESSAGE<<EOF" >> $GITHUB_ENV
+          echo "$COMMIT_MSG" >> $GITHUB_ENV # <-- Use $COMMIT_MSG here
+          echo "EOF" >> $GITHUB_ENV
+          echo "FILES_CHANGED=$FILES_CHANGED" >> $GITHUB_ENV # Add files changed
+          echo "LINES_ADDED=$LINES_ADDED" >> $GITHUB_ENV
+          echo "LINES_DELETED=$LINES_DELETED" >> $GITHUB_ENV
+          # Set output path as both env var (for script) and step output (for upload step)
+          OUTPUT_FILENAME="commit-story-${COMMIT_SHA_SHORT}.png"
+          echo "OUTPUT_PATH=$OUTPUT_FILENAME" >> $GITHUB_ENV
+          echo "output-path=$OUTPUT_FILENAME" >> $GITHUB_OUTPUT # Set step output
+
+      # Step 11: Generate the image using the Node.js script
+      - name: Generate commit image
+        run: node .github/commit-story/generate-commit-image.js
+        env:
+          COMMIT_MESSAGE: ${{ env.COMMIT_MESSAGE }}
+          COMMIT_SHA_FULL: ${{ env.COMMIT_SHA_FULL }}
+          FILES_CHANGED: ${{ env.FILES_CHANGED }}
+          LINES_ADDED: ${{ env.LINES_ADDED }}
+          LINES_DELETED: ${{ env.LINES_DELETED }}
+          OUTPUT_PATH: ${{ env.OUTPUT_PATH }}
+
+      # Step 10: Upload the generated image as an artifact
+      - name: Upload commit image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: commit-story-image # Name of the artifact
+          # Use step output context instead of env context for the path
+          path: ${{ steps.commit_data.outputs.output-path }}

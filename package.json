@@ -1,0 +1,48 @@
+{
+  "author": "Mehdy Lafitte",
+  "bugs": {
+    "url": "https://github.com/lafittemehdy/commit-to-story/issues"
+  },
+  "dependencies": {
+    "puppeteer": "^22.10.0"
+  },
+  "description": "Automated tool to generate visual summaries of Git commits as images, perfect for sharing project progress and creating a development 'story'. Captures commit messages, SHAs, and diff stats.",
+  "devDependencies": {
+    "dotenv": "^16.4.5"
+  },
+  "homepage": "https://github.com/lafittemehdy/commit-to-story#readme",
+  "keywords": [
+    "automation",
+    "ci-cd",
+    "commit",
+    "commit-visualization",
+    "dev-tools",
+    "git",
+    "github-actions",
+    "image",
+    "nodejs",
+    "puppeteer",
+    "reporting",
+    "story",
+    "summary",
+    "visual-summary",
+    "visualization"
+  ],
+  "license": "MIT",
+  "name": "commit-to-story",
+  "packageManager": "pnpm@10.11.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "puppeteer"
+    ]
+  },
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lafittemehdy/commit-to-story.git"
+  },
+  "scripts": {
+    "generate": "node .github/commit-story/generate-commit-image.js"
+  },
+  "version": "0.1.0"
+}
